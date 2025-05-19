@@ -2,4 +2,6 @@
 credentials.json
 token.json
 dist/credentials.json
-dist/token.json
+dist/token.json"dist/credentials.json" 
+"dist/token.json" 
+"token.json" 
