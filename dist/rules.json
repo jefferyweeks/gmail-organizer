@@ -1,0 +1,27 @@
+[
+  {
+    "type": "from",
+    "contains": "churchofjesuschrist",
+    "label": "@Church"
+  },
+  {
+    "type": "from",
+    "contains": "vividseats",
+    "label": "@Delete"
+  },
+  {
+    "type": "subject",
+    "contains": "noreply",
+    "label": "@Archive"
+  },
+  {
+    "type": "subject",
+    "contains": "No Reply",
+    "label": "@Archive"
+  },
+  {
+    "type": "from",
+    "contains": "alpinedistrict",
+    "label": "@AlpineDistrict"
+  }
+]

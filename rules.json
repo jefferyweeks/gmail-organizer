@@ -1,0 +1,107 @@
+[
+  {
+    "type": "from",
+    "contains": "churchofjesuschrist",
+    "label": "@Church"
+  },
+  {
+    "type": "from",
+    "contains": "vividseats",
+    "label": "@Delete"
+  },
+  {
+    "type": "subject",
+    "contains": "noreply",
+    "label": "@Archive"
+  },
+  {
+    "type": "subject",
+    "contains": "No Reply",
+    "label": "@Archive"
+  },
+  {
+    "type": "from",
+    "contains": "alpinedistrict",
+    "label": "@AlpineDistrict"
+  },
+  {
+    "type": "from",
+    "contains": "royal caribbean <royalcaribbean@reply.royalcaribbeanmarketing.com>",
+    "label": "@Delete"
+  },
+  {
+    "type": "from",
+    "contains": "shein",
+    "label": "@Delete"
+  },
+  {
+    "type": "from",
+    "contains": "snowbird",
+    "label": "@Later"
+  },
+  {
+    "type": "from",
+    "contains": "tuttletwins",
+    "label": "@Education"
+  },
+  {
+    "type": "from",
+    "contains": "newyorktimes",
+    "label": "@Delete"
+  },
+  {
+    "type": "from",
+    "contains": "nytimes",
+    "label": "@Delete"
+  },
+  {
+    "type": "from",
+    "contains": "comefollowmestudy",
+    "label": "@Church"
+  },
+  {
+    "type": "from",
+    "contains": "royalcaribbeanmarketing",
+    "label": "@Later"
+  },
+  {
+    "type": "from",
+    "contains": "shein",
+    "label": "@Later"
+  },
+  {
+    "type": "from",
+    "contains": "deseretbook",
+    "label": "@Church"
+  },
+  {
+    "type": "from",
+    "contains": "simple",
+    "label": "@Delete"
+  },
+  {
+    "type": "from",
+    "contains": "abcmouse",
+    "label": "@Delete"
+  },
+  {
+    "type": "from",
+    "contains": "dropbox",
+    "label": "@Later"
+  },
+  {
+    "type": "from",
+    "contains": "instacartemail",
+    "label": "@Shopping"
+  },
+  {
+    "type": "from",
+    "contains": "megaplextheatres",
+    "label": "@Delete"
+  },
+  {
+    "type": "from",
+    "contains": "theutahhomes",
+    "label": "@Later"
+  }
+]
