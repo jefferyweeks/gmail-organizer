@@ -1,10 +1,9 @@
-import os.path
-import pickle
+import os
 import json
 import time
 import logging
 from google.auth.transport.requests import Request
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
@@ -58,78 +57,17 @@ def apply_label(service, user_id, msg_id, label_name):
     except Exception as e:
         logging.error(f"❌ Failed to apply label to message ID {msg_id}: {e}")
 
-def main():
-    logging.info("🟢 Gmail Organizer started...")
-    creds = None
+def authenticate_gmail():
+    credentials_dict = json.loads(os.getenv("GOOGLE_CREDENTIALS_JSON", "{}"))
+    if not credentials_dict:
+        raise ValueError("Missing GOOGLE_CREDENTIALS_JSON environment variable")
 
-    if os.path.exists('token.json'):
-        with open('token.json', 'rb') as token:
-            creds = pickle.load(token)
+    flow = Flow.from_client_config(credentials_dict, SCOPES)
+    auth_url, _ = flow.authorization_url(access_type='offline', include_granted_scopes='true')
+    print(f"🔗 Visit this URL to authorize the app:\n{auth_url}")
+    code = input("Paste the authorization code here: ")
+    flow.fetch_token(code=code)
 
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-            creds = flow.run_local_server(port=0)
-        with open('token.json', 'wb') as token:
-            pickle.dump(creds, token)
-
+    creds = flow.credentials
     service = build('gmail', 'v1', credentials=creds)
-    rules = load_rules()
-    logging.info(f"📖 Loaded {len(rules)} rules from rules.json")
-
-    results = service.users().messages().list(
-        userId='me',
-        labelIds=['INBOX', 'UNREAD'],
-        maxResults=2000
-    ).execute()
-
-    messages = results.get('messages', [])
-    if not messages:
-        logging.info("📭 No unread messages in Inbox.")
-        return
-    else:
-        logging.info(f"📬 Found {len(messages)} unread message(s) in Inbox.")
-
-    processed = 0
-
-    for msg in messages:
-        try:
-            msg_data = service.users().messages().get(
-                userId='me',
-                id=msg['id'],
-                format='metadata',
-                metadataHeaders=['Subject', 'From']
-            ).execute()
-
-            headers = msg_data['payload'].get('headers', [])
-            sender = subject = '(unknown)'
-            for header in headers:
-                if header['name'] == 'From':
-                    sender = header['value']
-                elif header['name'] == 'Subject':
-                    subject = header['value']
-
-            label_name = '@Later'
-            for rule in rules:
-                rule_type = rule.get('type')
-                match_text = rule.get('contains', '').lower()
-                if rule_type == 'from' and match_text in sender.lower():
-                    label_name = rule['label']
-                    break
-                elif rule_type == 'subject' and match_text in subject.lower():
-                    label_name = rule['label']
-                    break
-
-            apply_label(service, 'me', msg['id'], label_name)
-            processed += 1
-            time.sleep(0.25)
-
-        except Exception as e:
-            logging.error(f"❌ Error processing message ID {msg['id']}: {e}")
-
-    logging.info(f"✅ Labeled and archived {processed} message(s).")
-
-if __name__ == '__main__':
-    main()
+    return service
