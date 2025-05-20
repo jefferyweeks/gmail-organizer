@@ -32,6 +32,40 @@ user_creds = None
 
 @app.route('/')
 def index():
+    global user_creds
+    user_email = request.args.get("email")  # optional query param
+
+    if user_email:
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS user_tokens (
+                user_email TEXT PRIMARY KEY,
+                token TEXT,
+                refresh_token TEXT,
+                token_uri TEXT,
+                client_id TEXT,
+                client_secret TEXT,
+                scopes TEXT
+            )
+        ''')
+        c.execute("SELECT token, refresh_token, token_uri, client_id, client_secret, scopes FROM user_tokens WHERE user_email=?", (user_email,))
+        row = c.fetchone()
+        conn.close()
+
+        if row:
+            token, refresh_token, token_uri, client_id, client_secret, scopes = row
+            creds = Credentials(
+                token=token,
+                refresh_token=refresh_token,
+                token_uri=token_uri,
+                client_id=client_id,
+                client_secret=client_secret,
+                scopes=json.loads(scopes)
+            )
+            user_creds = creds
+            return redirect("/suggest-labels")  # or any other route
+
     auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline', include_granted_scopes='true')
     return redirect(auth_url)
 
@@ -41,13 +75,11 @@ def oauth2callback():
     flow.fetch_token(authorization_response=request.url)
     creds = flow.credentials
     user_creds = creds
-
     try:
         service = build('gmail', 'v1', credentials=creds)
         profile = service.users().getProfile(userId='me').execute()
-        email_address = profile['emailAddress']
+        user_email = profile['emailAddress']
 
-        # Save user token to database
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         c.execute('''
@@ -62,10 +94,11 @@ def oauth2callback():
             )
         ''')
         c.execute('''
-            INSERT OR REPLACE INTO user_tokens (user_email, token, refresh_token, token_uri, client_id, client_secret, scopes)
+            INSERT OR REPLACE INTO user_tokens
+            (user_email, token, refresh_token, token_uri, client_id, client_secret, scopes)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         ''', (
-            email_address,
+            user_email,
             creds.token,
             creds.refresh_token,
             creds.token_uri,
@@ -76,7 +109,7 @@ def oauth2callback():
         conn.commit()
         conn.close()
 
-        return jsonify({'status': 'OAuth success!', 'email': email_address})
+        return jsonify({'status': 'OAuth success!', 'email': user_email})
     except Exception as e:
         return f"OAuth callback failed:\n{str(e)}", 500
 
