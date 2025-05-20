@@ -41,10 +41,41 @@ def oauth2callback():
     flow.fetch_token(authorization_response=request.url)
     creds = flow.credentials
     user_creds = creds
+
     try:
         service = build('gmail', 'v1', credentials=creds)
         profile = service.users().getProfile(userId='me').execute()
         email_address = profile['emailAddress']
+
+        # Save user token to database
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS user_tokens (
+                user_email TEXT PRIMARY KEY,
+                token TEXT,
+                refresh_token TEXT,
+                token_uri TEXT,
+                client_id TEXT,
+                client_secret TEXT,
+                scopes TEXT
+            )
+        ''')
+        c.execute('''
+            INSERT OR REPLACE INTO user_tokens (user_email, token, refresh_token, token_uri, client_id, client_secret, scopes)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            email_address,
+            creds.token,
+            creds.refresh_token,
+            creds.token_uri,
+            creds.client_id,
+            creds.client_secret,
+            json.dumps(creds.scopes)
+        ))
+        conn.commit()
+        conn.close()
+
         return jsonify({'status': 'OAuth success!', 'email': email_address})
     except Exception as e:
         return f"OAuth callback failed:\n{str(e)}", 500
@@ -53,7 +84,6 @@ def oauth2callback():
 def setup_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    
     c.execute('''
         CREATE TABLE IF NOT EXISTS labeled_emails (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,15 +93,17 @@ def setup_db():
             label TEXT
         )
     ''')
-    
     c.execute('''
         CREATE TABLE IF NOT EXISTS user_tokens (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_email TEXT UNIQUE,
-            token_json TEXT
+            user_email TEXT PRIMARY KEY,
+            token TEXT,
+            refresh_token TEXT,
+            token_uri TEXT,
+            client_id TEXT,
+            client_secret TEXT,
+            scopes TEXT
         )
     ''')
-
     conn.commit()
     conn.close()
     return "Database and tables created successfully."
