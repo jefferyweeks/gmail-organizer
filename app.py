@@ -2,7 +2,7 @@ import os
 import json
 import sqlite3
 import openai
-from flask import Flask, redirect, request, jsonify
+from flask import Flask, redirect, request, jsonify, render_template_string
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
@@ -63,18 +63,14 @@ def setup_db():
         )
     ''')
     c.execute('''
-        CREATE TABLE IF NOT EXISTS label_suggestions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_email TEXT,
-            sender TEXT,
-            subject TEXT,
-            suggested_label TEXT,
-            thread_id TEXT
+        CREATE TABLE IF NOT EXISTS user_tokens (
+            email TEXT PRIMARY KEY,
+            token TEXT
         )
     ''')
     conn.commit()
     conn.close()
-    return "Database and table created successfully."
+    return "Database and tables created successfully."
 
 @app.route('/fetch-labeled-emails')
 def fetch_labeled_emails():
@@ -139,7 +135,6 @@ def suggest_labels():
         headers = msg_detail.get('payload', {}).get('headers', [])
         msg_from = next((h['value'] for h in headers if h['name'] == 'From'), '')
         msg_subject = next((h['value'] for h in headers if h['name'] == 'Subject'), '')
-        thread_id = msg_detail.get('threadId', '')
 
         example_lines = [f'Sender: {s}\nSubject: {subj}\nLabel: {lbl}' for s, subj, lbl in training_examples]
         prompt = "You are an email labeling assistant. Based on the following examples, suggest a label:\n\n"
@@ -162,18 +157,38 @@ def suggest_labels():
             "suggested_label": label_suggestion
         })
 
-        c.execute("""
-            SELECT 1 FROM label_suggestions WHERE user_email=? AND sender=? AND subject=? AND suggested_label=?
-        """, (user_email, msg_from, msg_subject, label_suggestion))
-        if not c.fetchone():
-            c.execute("""
-                INSERT INTO label_suggestions (user_email, sender, subject, suggested_label, thread_id)
-                VALUES (?, ?, ?, ?, ?)
-            """, (user_email, msg_from, msg_subject, label_suggestion, thread_id))
+    html_template = '''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Label Suggestions</title>
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    </head>
+    <body class="container mt-4">
+        <h2>ChatGPT-Suggested Email Labels</h2>
+        <table class="table table-bordered table-striped">
+            <thead class="table-dark">
+                <tr>
+                    <th>From</th>
+                    <th>Subject</th>
+                    <th>Suggested Label</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in suggestions %}
+                <tr>
+                    <td>{{ s.from }}</td>
+                    <td>{{ s.subject }}</td>
+                    <td>{{ s.suggested_label }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </body>
+    </html>
+    '''
 
-    conn.commit()
-    conn.close()
-    return jsonify({"suggestions": suggestions})
+    return render_template_string(html_template, suggestions=suggestions)
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
