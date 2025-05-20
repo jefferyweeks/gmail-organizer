@@ -53,6 +53,7 @@ def oauth2callback():
 def setup_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
+    
     c.execute('''
         CREATE TABLE IF NOT EXISTS labeled_emails (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -62,9 +63,18 @@ def setup_db():
             label TEXT
         )
     ''')
+    
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS user_tokens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_email TEXT UNIQUE,
+            token_json TEXT
+        )
+    ''')
+
     conn.commit()
     conn.close()
-    return "Database and table created successfully."
+    return "Database and tables created successfully."
 
 @app.route('/fetch-labeled-emails')
 def fetch_labeled_emails():
