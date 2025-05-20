@@ -1,18 +1,19 @@
 import os
 import json
-from urllib.parse import urljoin
 from flask import Flask, redirect, request, jsonify
 from dotenv import load_dotenv
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 # Load environment variables
 load_dotenv()
 
-# Flask app
+# Flask app with ProxyFix to respect HTTPS headers from Render
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
-# Scopes and config
+# Scopes and OAuth credentials
 SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
 credentials_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
 REDIRECT_URI = os.getenv("REDIRECT_URI")
@@ -50,11 +51,7 @@ def oauth2callback():
             scopes=SCOPES,
             redirect_uri=REDIRECT_URI
         )
-
-        # Force https manually for Render internal redirects
-        authorization_response = urljoin(REDIRECT_URI, request.full_path)
-        flow.fetch_token(authorization_response=authorization_response)
-
+        flow.fetch_token(authorization_response=request.url)
         creds = flow.credentials
         service = build('gmail', 'v1', credentials=creds)
         labels = service.users().labels().list(userId='me').execute()
