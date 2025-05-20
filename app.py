@@ -1,4 +1,6 @@
 import os
+os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'  # 👈 Add this line
+
 import json
 from flask import Flask, redirect, request, jsonify
 from dotenv import load_dotenv
