@@ -1,6 +1,7 @@
 import os
 import json
 import sqlite3
+import openai
 from flask import Flask, redirect, request, jsonify
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
@@ -14,9 +15,11 @@ app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1)
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
+DB_PATH = "labeled_emails.db"
 
 credentials_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
 redirect_uri = os.getenv("REDIRECT_URI")
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 if not credentials_json:
     raise ValueError("Missing GOOGLE_CREDENTIALS_JSON env variable")
@@ -38,7 +41,6 @@ def oauth2callback():
     flow.fetch_token(authorization_response=request.url)
     creds = flow.credentials
     user_creds = creds
-
     try:
         service = build('gmail', 'v1', credentials=creds)
         profile = service.users().getProfile(userId='me').execute()
@@ -49,16 +51,15 @@ def oauth2callback():
 
 @app.route('/setup-db')
 def setup_db():
-    conn = sqlite3.connect("labeled_emails.db")
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''
         CREATE TABLE IF NOT EXISTS labeled_emails (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_email TEXT,
-            label TEXT,
             sender TEXT,
             subject TEXT,
-            thread_id TEXT
+            label TEXT
         )
     ''')
     conn.commit()
@@ -74,16 +75,15 @@ def fetch_labeled_emails():
     profile = service.users().getProfile(userId='me').execute()
     user_email = profile['emailAddress']
 
-    conn = sqlite3.connect("labeled_emails.db")
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
+    c.execute("CREATE TABLE IF NOT EXISTS labeled_emails (id INTEGER PRIMARY KEY AUTOINCREMENT, user_email TEXT, sender TEXT, subject TEXT, label TEXT)")
 
     labels = service.users().labels().list(userId='me').execute().get('labels', [])
-    inserted_count = 0
+    custom_labels = [label for label in labels if label['type'] != 'system']
 
-    for label in labels:
-        if label['type'] != 'system':
-            continue
-
+    total_added = 0
+    for label in custom_labels:
         results = service.users().messages().list(userId='me', labelIds=[label['id']], maxResults=10).execute()
         messages = results.get('messages', [])
 
@@ -92,22 +92,66 @@ def fetch_labeled_emails():
             headers = msg_detail.get('payload', {}).get('headers', [])
             msg_from = next((h['value'] for h in headers if h['name'] == 'From'), '')
             msg_subject = next((h['value'] for h in headers if h['name'] == 'Subject'), '')
-            thread_id = msg_detail['threadId']
 
-            c.execute('''
-                SELECT 1 FROM labeled_emails WHERE user_email=? AND label=? AND sender=? AND subject=? AND thread_id=?
-            ''', (user_email, label['name'], msg_from, msg_subject, thread_id))
+            c.execute("SELECT 1 FROM labeled_emails WHERE user_email=? AND sender=? AND subject=? AND label=?",
+                      (user_email, msg_from, msg_subject, label['name']))
             if not c.fetchone():
-                c.execute('''
-                    INSERT INTO labeled_emails (user_email, label, sender, subject, thread_id)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (user_email, label['name'], msg_from, msg_subject, thread_id))
-                inserted_count += 1
+                c.execute("INSERT INTO labeled_emails (user_email, sender, subject, label) VALUES (?, ?, ?, ?)",
+                          (user_email, msg_from, msg_subject, label['name']))
+                total_added += 1
 
     conn.commit()
     conn.close()
+    return jsonify({'status': 'Fetched labeled emails', 'count': total_added})
 
-    return jsonify({'status': 'Fetched labeled emails', 'inserted': inserted_count})
+@app.route('/suggest-labels')
+def suggest_labels():
+    if not user_creds:
+        return "User not authenticated", 401
+
+    service = build('gmail', 'v1', credentials=user_creds)
+    profile = service.users().getProfile(userId='me').execute()
+    user_email = profile['emailAddress']
+
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT sender, subject, label FROM labeled_emails WHERE user_email=? LIMIT 20", (user_email,))
+    training_examples = c.fetchall()
+
+    system_labels = ['INBOX']
+    results = service.users().messages().list(userId='me', labelIds=system_labels, maxResults=5).execute()
+    messages = results.get('messages', [])
+
+    suggestions = []
+
+    for msg in messages:
+        msg_detail = service.users().messages().get(userId='me', id=msg['id'], format='metadata', metadataHeaders=['From', 'Subject']).execute()
+        headers = msg_detail.get('payload', {}).get('headers', [])
+        msg_from = next((h['value'] for h in headers if h['name'] == 'From'), '')
+        msg_subject = next((h['value'] for h in headers if h['name'] == 'Subject'), '')
+
+        example_lines = [f'Sender: {s}\nSubject: {subj}\nLabel: {lbl}' for s, subj, lbl in training_examples]
+        prompt = "You are an email labeling assistant. Based on the following examples, suggest a label:\n\n"
+        prompt += "\n\n".join(example_lines)
+        prompt += f"\n\nSender: {msg_from}\nSubject: {msg_subject}\nLabel:"
+
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are an email categorizer."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0.2
+        )
+
+        label_suggestion = response['choices'][0]['message']['content'].strip()
+        suggestions.append({
+            "from": msg_from,
+            "subject": msg_subject,
+            "suggested_label": label_suggestion
+        })
+
+    return jsonify({"suggestions": suggestions})
 
 if __name__ == '__main__':
-    app.run(debug=True, host="0.0.0.0", port=10000)
+    app.run(debug=True, port=5000)
