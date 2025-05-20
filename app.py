@@ -9,11 +9,11 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 # Load environment variables
 load_dotenv()
 
-# Flask app with ProxyFix to respect HTTPS headers from Render
+# Set up Flask app and handle HTTPS via ProxyFix
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
-# Scopes and OAuth credentials
+# Scopes and environment variables
 SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
 credentials_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
 REDIRECT_URI = os.getenv("REDIRECT_URI")
@@ -23,6 +23,7 @@ if not credentials_json:
 if not REDIRECT_URI:
     raise ValueError("Missing REDIRECT_URI environment variable")
 
+# Parse credentials JSON
 credentials_dict = json.loads(credentials_json)
 
 @app.route("/")
@@ -52,6 +53,7 @@ def oauth2callback():
             redirect_uri=REDIRECT_URI
         )
         flow.fetch_token(authorization_response=request.url)
+
         creds = flow.credentials
         service = build('gmail', 'v1', credentials=creds)
         labels = service.users().labels().list(userId='me').execute()
@@ -61,8 +63,8 @@ def oauth2callback():
             "labels": labels.get('labels', [])
         })
     except Exception as e:
-        print(f"[CALLBACK ERROR] {e}")
-        return f"OAuth callback failed: {e}", 500
+        import traceback
+        return f"<pre>OAuth callback failed:\n{traceback.format_exc()}</pre>", 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
