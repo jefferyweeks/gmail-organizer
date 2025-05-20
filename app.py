@@ -15,7 +15,6 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1)
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
 
-# Load credentials from environment variable
 credentials_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
 redirect_uri = os.getenv("REDIRECT_URI")
 
@@ -48,6 +47,24 @@ def oauth2callback():
     except Exception as e:
         return f"OAuth callback failed:\n{str(e)}", 500
 
+@app.route('/setup-db')
+def setup_db():
+    conn = sqlite3.connect("labeled_emails.db")
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS labeled_emails (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_email TEXT,
+            label TEXT,
+            sender TEXT,
+            subject TEXT,
+            thread_id TEXT
+        )
+    ''')
+    conn.commit()
+    conn.close()
+    return "Database and table created successfully."
+
 @app.route('/fetch-labeled-emails')
 def fetch_labeled_emails():
     if not user_creds:
@@ -58,9 +75,11 @@ def fetch_labeled_emails():
     user_email = profile['emailAddress']
 
     conn = sqlite3.connect("labeled_emails.db")
-    cursor = conn.cursor()
+    c = conn.cursor()
 
     labels = service.users().labels().list(userId='me').execute().get('labels', [])
+    inserted_count = 0
+
     for label in labels:
         if label['type'] != 'system':
             continue
@@ -73,35 +92,22 @@ def fetch_labeled_emails():
             headers = msg_detail.get('payload', {}).get('headers', [])
             msg_from = next((h['value'] for h in headers if h['name'] == 'From'), '')
             msg_subject = next((h['value'] for h in headers if h['name'] == 'Subject'), '')
+            thread_id = msg_detail['threadId']
 
-            cursor.execute("""
-                INSERT OR IGNORE INTO labeled_emails (user_email, label, sender, subject, thread_id)
-                VALUES (?, ?, ?, ?, ?)
-            """, (user_email, label['name'], msg_from, msg_subject, msg_detail['threadId']))
+            c.execute('''
+                SELECT 1 FROM labeled_emails WHERE user_email=? AND label=? AND sender=? AND subject=? AND thread_id=?
+            ''', (user_email, label['name'], msg_from, msg_subject, thread_id))
+            if not c.fetchone():
+                c.execute('''
+                    INSERT INTO labeled_emails (user_email, label, sender, subject, thread_id)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (user_email, label['name'], msg_from, msg_subject, thread_id))
+                inserted_count += 1
 
     conn.commit()
     conn.close()
 
-    return jsonify({'status': 'Fetched labeled emails', 'count': len(messages)})
-
-@app.route('/setup-db')
-def setup_db():
-    conn = sqlite3.connect("labeled_emails.db")
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS labeled_emails (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_email TEXT,
-            label TEXT,
-            sender TEXT,
-            subject TEXT,
-            thread_id TEXT,
-            UNIQUE(user_email, thread_id, label)
-        )
-    """)
-    conn.commit()
-    conn.close()
-    return "Database and table created successfully."
+    return jsonify({'status': 'Fetched labeled emails', 'inserted': inserted_count})
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=True, host="0.0.0.0", port=10000)
