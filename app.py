@@ -41,26 +41,10 @@ def oauth2callback():
     flow.fetch_token(authorization_response=request.url)
     creds = flow.credentials
     user_creds = creds
-
     try:
         service = build('gmail', 'v1', credentials=creds)
         profile = service.users().getProfile(userId='me').execute()
         email_address = profile['emailAddress']
-
-        # Store user token in DB
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS user_tokens (
-                email TEXT PRIMARY KEY,
-                token TEXT
-            )
-        ''')
-        c.execute('REPLACE INTO user_tokens (email, token) VALUES (?, ?)',
-                  (email_address, creds.to_json()))
-        conn.commit()
-        conn.close()
-
         return jsonify({'status': 'OAuth success!', 'email': email_address})
     except Exception as e:
         return f"OAuth callback failed:\n{str(e)}", 500
@@ -79,32 +63,25 @@ def setup_db():
         )
     ''')
     c.execute('''
-        CREATE TABLE IF NOT EXISTS user_tokens (
-            email TEXT PRIMARY KEY,
-            token TEXT
+        CREATE TABLE IF NOT EXISTS label_suggestions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_email TEXT,
+            sender TEXT,
+            subject TEXT,
+            suggested_label TEXT,
+            thread_id TEXT
         )
     ''')
     conn.commit()
     conn.close()
     return "Database and table created successfully."
 
-def get_user_credentials():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute("SELECT token FROM user_tokens LIMIT 1")
-    row = c.fetchone()
-    conn.close()
-    if row:
-        return Credentials.from_authorized_user_info(json.loads(row[0]), SCOPES)
-    return None
-
 @app.route('/fetch-labeled-emails')
 def fetch_labeled_emails():
-    creds = get_user_credentials()
-    if not creds:
+    if not user_creds:
         return "User not authenticated", 401
 
-    service = build('gmail', 'v1', credentials=creds)
+    service = build('gmail', 'v1', credentials=user_creds)
     profile = service.users().getProfile(userId='me').execute()
     user_email = profile['emailAddress']
 
@@ -139,11 +116,10 @@ def fetch_labeled_emails():
 
 @app.route('/suggest-labels')
 def suggest_labels():
-    creds = get_user_credentials()
-    if not creds:
+    if not user_creds:
         return "User not authenticated", 401
 
-    service = build('gmail', 'v1', credentials=creds)
+    service = build('gmail', 'v1', credentials=user_creds)
     profile = service.users().getProfile(userId='me').execute()
     user_email = profile['emailAddress']
 
@@ -163,6 +139,7 @@ def suggest_labels():
         headers = msg_detail.get('payload', {}).get('headers', [])
         msg_from = next((h['value'] for h in headers if h['name'] == 'From'), '')
         msg_subject = next((h['value'] for h in headers if h['name'] == 'Subject'), '')
+        thread_id = msg_detail.get('threadId', '')
 
         example_lines = [f'Sender: {s}\nSubject: {subj}\nLabel: {lbl}' for s, subj, lbl in training_examples]
         prompt = "You are an email labeling assistant. Based on the following examples, suggest a label:\n\n"
@@ -185,6 +162,17 @@ def suggest_labels():
             "suggested_label": label_suggestion
         })
 
+        c.execute("""
+            SELECT 1 FROM label_suggestions WHERE user_email=? AND sender=? AND subject=? AND suggested_label=?
+        """, (user_email, msg_from, msg_subject, label_suggestion))
+        if not c.fetchone():
+            c.execute("""
+                INSERT INTO label_suggestions (user_email, sender, subject, suggested_label, thread_id)
+                VALUES (?, ?, ?, ?, ?)
+            """, (user_email, msg_from, msg_subject, label_suggestion, thread_id))
+
+    conn.commit()
+    conn.close()
     return jsonify({"suggestions": suggestions})
 
 if __name__ == '__main__':
