@@ -32,40 +32,6 @@ user_creds = None
 
 @app.route('/')
 def index():
-    global user_creds
-    user_email = request.args.get("email")  # optional query param
-
-    if user_email:
-        conn = sqlite3.connect(DB_PATH)
-        c = conn.cursor()
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS user_tokens (
-                user_email TEXT PRIMARY KEY,
-                token TEXT,
-                refresh_token TEXT,
-                token_uri TEXT,
-                client_id TEXT,
-                client_secret TEXT,
-                scopes TEXT
-            )
-        ''')
-        c.execute("SELECT token, refresh_token, token_uri, client_id, client_secret, scopes FROM user_tokens WHERE user_email=?", (user_email,))
-        row = c.fetchone()
-        conn.close()
-
-        if row:
-            token, refresh_token, token_uri, client_id, client_secret, scopes = row
-            creds = Credentials(
-                token=token,
-                refresh_token=refresh_token,
-                token_uri=token_uri,
-                client_id=client_id,
-                client_secret=client_secret,
-                scopes=json.loads(scopes)
-            )
-            user_creds = creds
-            return redirect("/suggest-labels")  # or any other route
-
     auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline', include_granted_scopes='true')
     return redirect(auth_url)
 
@@ -75,41 +41,27 @@ def oauth2callback():
     flow.fetch_token(authorization_response=request.url)
     creds = flow.credentials
     user_creds = creds
+
     try:
         service = build('gmail', 'v1', credentials=creds)
         profile = service.users().getProfile(userId='me').execute()
-        user_email = profile['emailAddress']
+        email_address = profile['emailAddress']
 
+        # Store user token in DB
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         c.execute('''
             CREATE TABLE IF NOT EXISTS user_tokens (
-                user_email TEXT PRIMARY KEY,
-                token TEXT,
-                refresh_token TEXT,
-                token_uri TEXT,
-                client_id TEXT,
-                client_secret TEXT,
-                scopes TEXT
+                email TEXT PRIMARY KEY,
+                token TEXT
             )
         ''')
-        c.execute('''
-            INSERT OR REPLACE INTO user_tokens
-            (user_email, token, refresh_token, token_uri, client_id, client_secret, scopes)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            user_email,
-            creds.token,
-            creds.refresh_token,
-            creds.token_uri,
-            creds.client_id,
-            creds.client_secret,
-            json.dumps(creds.scopes)
-        ))
+        c.execute('REPLACE INTO user_tokens (email, token) VALUES (?, ?)',
+                  (email_address, creds.to_json()))
         conn.commit()
         conn.close()
 
-        return jsonify({'status': 'OAuth success!', 'email': user_email})
+        return jsonify({'status': 'OAuth success!', 'email': email_address})
     except Exception as e:
         return f"OAuth callback failed:\n{str(e)}", 500
 
@@ -128,25 +80,31 @@ def setup_db():
     ''')
     c.execute('''
         CREATE TABLE IF NOT EXISTS user_tokens (
-            user_email TEXT PRIMARY KEY,
-            token TEXT,
-            refresh_token TEXT,
-            token_uri TEXT,
-            client_id TEXT,
-            client_secret TEXT,
-            scopes TEXT
+            email TEXT PRIMARY KEY,
+            token TEXT
         )
     ''')
     conn.commit()
     conn.close()
-    return "Database and tables created successfully."
+    return "Database and table created successfully."
+
+def get_user_credentials():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT token FROM user_tokens LIMIT 1")
+    row = c.fetchone()
+    conn.close()
+    if row:
+        return Credentials.from_authorized_user_info(json.loads(row[0]), SCOPES)
+    return None
 
 @app.route('/fetch-labeled-emails')
 def fetch_labeled_emails():
-    if not user_creds:
+    creds = get_user_credentials()
+    if not creds:
         return "User not authenticated", 401
 
-    service = build('gmail', 'v1', credentials=user_creds)
+    service = build('gmail', 'v1', credentials=creds)
     profile = service.users().getProfile(userId='me').execute()
     user_email = profile['emailAddress']
 
@@ -181,10 +139,11 @@ def fetch_labeled_emails():
 
 @app.route('/suggest-labels')
 def suggest_labels():
-    if not user_creds:
+    creds = get_user_credentials()
+    if not creds:
         return "User not authenticated", 401
 
-    service = build('gmail', 'v1', credentials=user_creds)
+    service = build('gmail', 'v1', credentials=creds)
     profile = service.users().getProfile(userId='me').execute()
     user_email = profile['emailAddress']
 
