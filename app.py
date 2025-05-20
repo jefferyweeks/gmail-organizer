@@ -14,18 +14,18 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1)
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
 
-# Load credentials from environment variable
+# Load credentials from env vars
 credentials_json = os.getenv("GOOGLE_CREDENTIALS_JSON")
 redirect_uri = os.getenv("REDIRECT_URI")
 
 if not credentials_json:
-    raise ValueError("Missing GOOGLE_CREDENTIALS_JSON env variable")
+    raise ValueError("Missing GOOGLE_CREDENTIALS_JSON environment variable")
 if not redirect_uri:
     raise ValueError("Missing REDIRECT_URI environment variable")
 
 credentials_dict = json.loads(credentials_json)
 flow = Flow.from_client_config(credentials_dict, scopes=SCOPES, redirect_uri=redirect_uri)
-user_creds = None  # Store in memory for now
+user_creds = None
 
 @app.route('/')
 def index():
@@ -35,11 +35,11 @@ def index():
 @app.route('/oauth2callback')
 def oauth2callback():
     global user_creds
-    flow.fetch_token(authorization_response=request.url)
-    creds = flow.credentials
-    user_creds = creds
-
     try:
+        flow.fetch_token(authorization_response=request.url)
+        creds = flow.credentials
+        user_creds = creds
+
         service = build('gmail', 'v1', credentials=creds)
         profile = service.users().getProfile(userId='me').execute()
         email_address = profile['emailAddress']
@@ -57,7 +57,6 @@ def fetch_labeled_emails():
     profile = service.users().getProfile(userId='me').execute()
     user_email = profile['emailAddress']
 
-    label_history = {}
     try:
         with open("label_history.json", "r") as f:
             label_history = json.load(f)
@@ -96,4 +95,5 @@ def fetch_labeled_emails():
     return jsonify({'status': 'Fetched labeled emails', 'count': len(label_history[user_email])})
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port, debug=True)
