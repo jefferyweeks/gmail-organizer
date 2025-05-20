@@ -28,8 +28,35 @@ if not redirect_uri:
 
 credentials_dict = json.loads(credentials_json)
 flow = Flow.from_client_config(credentials_dict, scopes=SCOPES, redirect_uri=redirect_uri)
-user_creds = None
 
+# --- Helper functions to store/load credentials ---
+def save_user_token(email, creds):
+    token_data = {
+        'token': creds.token,
+        'refresh_token': creds.refresh_token,
+        'token_uri': creds.token_uri,
+        'client_id': creds.client_id,
+        'client_secret': creds.client_secret,
+        'scopes': creds.scopes
+    }
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("REPLACE INTO user_tokens (email, token) VALUES (?, ?)", (email, json.dumps(token_data)))
+    conn.commit()
+    conn.close()
+
+def load_user_token(email):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT token FROM user_tokens WHERE email = ?", (email,))
+    row = c.fetchone()
+    conn.close()
+    if row:
+        data = json.loads(row[0])
+        return Credentials(**data)
+    return None
+
+# --- Routes ---
 @app.route('/')
 def index():
     auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline', include_granted_scopes='true')
@@ -37,14 +64,15 @@ def index():
 
 @app.route('/oauth2callback')
 def oauth2callback():
-    global user_creds
     flow.fetch_token(authorization_response=request.url)
     creds = flow.credentials
-    user_creds = creds
     try:
         service = build('gmail', 'v1', credentials=creds)
         profile = service.users().getProfile(userId='me').execute()
         email_address = profile['emailAddress']
+
+        save_user_token(email_address, creds)
+
         return jsonify({'status': 'OAuth success!', 'email': email_address})
     except Exception as e:
         return f"OAuth callback failed:\n{str(e)}", 500
@@ -74,12 +102,12 @@ def setup_db():
 
 @app.route('/fetch-labeled-emails')
 def fetch_labeled_emails():
-    if not user_creds:
+    user_email = request.args.get("email")
+    creds = load_user_token(user_email)
+    if not creds:
         return "User not authenticated", 401
 
-    service = build('gmail', 'v1', credentials=user_creds)
-    profile = service.users().getProfile(userId='me').execute()
-    user_email = profile['emailAddress']
+    service = build('gmail', 'v1', credentials=creds)
 
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -112,12 +140,12 @@ def fetch_labeled_emails():
 
 @app.route('/suggest-labels')
 def suggest_labels():
-    if not user_creds:
+    user_email = request.args.get("email")
+    creds = load_user_token(user_email)
+    if not creds:
         return "User not authenticated", 401
 
-    service = build('gmail', 'v1', credentials=user_creds)
-    profile = service.users().getProfile(userId='me').execute()
-    user_email = profile['emailAddress']
+    service = build('gmail', 'v1', credentials=creds)
 
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
