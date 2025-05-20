@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Review Label Suggestions</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <style>
+        body {
+            padding: 2rem;
+            background-color: #f8f9fa;
+        }
+        .container {
+            max-width: 900px;
+        }
+        .card {
+            margin-bottom: 1rem;
+        }
+        textarea {
+            resize: vertical;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2 class="mb-4">Review AI Label Suggestions</h2>
+
+        {% if suggestions %}
+            <form method="post" action="/submit-suggestions">
+                {% for suggestion in suggestions %}
+                    <div class="card shadow-sm">
+                        <div class="card-body">
+                            <p><strong>From:</strong> {{ suggestion.from }}</p>
+                            <p><strong>Subject:</strong> {{ suggestion.subject }}</p>
+                            <p><strong>Suggested Label:</strong> <em>{{ suggestion.suggested_label }}</em></p>
+
+                            <div class="form-group">
+                                <label for="label_{{ loop.index }}">Confirm or Modify Label:</label>
+                                <input type="hidden" name="msg_id_{{ loop.index }}" value="{{ suggestion.msg_id }}">
+                                <input type="text" class="form-control" id="label_{{ loop.index }}" name="label_{{ loop.index }}" value="{{ suggestion.suggested_label }}">
+                            </div>
+                        </div>
+                    </div>
+                {% endfor %}
+                <input type="hidden" name="count" value="{{ suggestions|length }}">
+                <button type="submit" class="btn btn-primary mt-3">Submit Reviewed Labels</button>
+            </form>
+        {% else %}
+            <div class="alert alert-info">No suggestions available yet.</div>
+        {% endif %}
+    </div>
+</body>
+</html>
